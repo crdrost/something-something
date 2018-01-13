@@ -1,103 +1,80 @@
-const START = 0;
-const DATA = 1;
-const END = 2;
+// This Source Code Form is subject to the terms of the Mozilla Public License, 
+// v. 2.0. If a copy of the MPL was not distributed with this file, You can 
+// obtain one at https://mozilla.org/MPL/2.0/.
 
-function interval(type, data) {
-  if (type === START) {
-    const sink = data;
-
+const interval = {
+  start(sink) {
     let i = 0;
     const handle = setInterval(() => {
-      sink(DATA, i++);
+      sink.data(i++);
     }, 1000);
     const dispose = () => {
       clearInterval(handle);
     };
-    function talkback(t, d) {
-      if (t === DATA) {
+    const talkback = {
+      data() {
         i = 0;
-      } else if (t === END) {
+      },
+      end() {
         dispose();
       }
     }
-    sink(0, talkback);
+    sink.start(talkback);
     return dispose;
+  }
+};
+
+function map(transform, source) {
+  return {
+    start(sink) {
+      let sourceTalkback = undefined;
+      const mapSink = Object.create(sink);
+      mapSink.start = mapTalkback => sink.start(sourceTalkback = mapTalkback);
+      mapSink.data = d => sink.data(transform(d))
+      return source.start(mapSink);
+    }
   }
 }
 
-function map(transform, source) {
-  return function mapSource(type, data) {
-    if (type === START) {
-      const sink = data;
-
-      let sourceTalkback = undefined;
-      const mapSink = (t, d) => {
-        if (t === START) {
-          sourceTalkback = d;
-          const mapTalkback = sourceTalkback;
-          return sink(0, mapTalkback);
-        }
-        if (t === DATA) {
-          return sink(t, transform(d));
-        }
-        return sink(t, d);
-      };
-      return source(START, mapSink);
-    }
-  };
-}
-
 function take(max, source) {
-  return function takeSource(type, data) {
-    if (type === START) {
-      const sink = data;
-
+  return {
+    start(sink) {
       let taken = 0;
       let sourceTalkback = undefined;
-      const takeSink = (t, d) => {
-        if (t === START) {
-          sourceTalkback = d;
-          const takeTalkback = sourceTalkback;
-          return sink(0, takeTalkback);
+      const takeSink = Object.create(sink);
+      takeSink.start = d => sink.start(sourceTalkback = takeTalkback);
+      takeSink.data = d => {
+        sink.data(d);
+        sink.end();
+        if (sourceTalkback) {
+          sourceTalkback.end();
         }
-        if (t === DATA && ++taken === max) {
-          sink(t, d);
-          sink(END);
-          if (sourceTalkback) {
-            sourceTalkback(END);
-          }
-          return;
-        }
-        return sink(t, d);
       };
-      return source(START, takeSink);
+      return source.start(takeSink);
     }
-  };
+  }
 }
 
 function drain() {
   let handle;
-  return function drainSink(type, data) {
-    if (type === START) {
-      const source = data;
+  return {
+    start(source) {
       handle = setTimeout(() => {
-        source(DATA); // send a message upstream
+        source.data(); // send a message upstream
       }, 4500);
-      return;
-    } else if (type === DATA) {
+    },
+    data(data) {
       console.log(data);
-      return;
-    } else if (type === END) {
-      if (handle) {
-        clearTimeout(handle);
-      }
+    },
+    end() {
+      clearTimeout(handle);
     }
   };
 }
 
 const mapInterval = map(x => x * 10, interval);
 const takeMapInterval = take(6, mapInterval);
-const dispose = takeMapInterval(START, drain());
+const dispose = takeMapInterval.start(drain());
 
 // setTimeout(() => {
 //   dispose();
